@@ -60,6 +60,9 @@ Then install the `libero` package:
 ```
 pip install -e .
 ```
+## Potential Installation Issues
+
+If, after installation, you receive a `libGL error: MESA-LOADER...`, follow the instructions in the following [stack overflow post](https://stackoverflow.com/questions/72110384/libgl-error-mesa-loader-failed-to-open-iris) 
 
 # Datasets
 We provide high-quality human teleoperation demonstrations for the four task suites in **LIBERO**. To download the demonstration dataset, run:
