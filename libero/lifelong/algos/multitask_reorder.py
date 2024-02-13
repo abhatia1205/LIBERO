@@ -4,47 +4,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader, RandomSampler, Sampler
+from torch.utils.data import ConcatDataset, DataLoader, RandomSampler
 
 from libero.lifelong.algos.base import Sequential
 from libero.lifelong.metric import *
 from libero.lifelong.models import *
 from libero.lifelong.utils import *
 
-class EqualBatchSampler(Sampler):
 
-    def __init__(self, datasets, batch_size, shuffle = True):
-        self.batch_size = batch_size
-        self.datasets = datasets
-        self.start_indices = self.datasets.cumulative_sizes
-        self.num_datasets = len(self.start_indices)
-        temp_indices = [0] + self.start_indices
-        self.dataset_indices = [np.arange(temp_indices[i], temp_indices[i+1]) for i in range(self.num_datasets)]
-        self.numAdded = [int(i) for i in np.diff(temp_indices)*self.batch_size/len(datasets)]
-        self.curr_index = [0]*self.num_datasets
-
-        if(shuffle):
-            [np.random.shuffle(_) for _ in self.dataset_indices]
-    
-    def __iter__(self):
-        while True:
-            try:
-                batch = []
-                for i, dataset in enumerate(self.dataset_indices):
-                    currIndex = self.curr_index[i]
-                    numAdded = min(len(dataset)-currIndex, self.numAdded[i])
-                    batch.extend(dataset[currIndex:currIndex+numAdded])
-                    self.curr_index[i]+=numAdded
-                np.random.shuffle(batch)
-                yield batch
-            except StopIteration:
-                break
-    
-    def __len__(self):
-        return len(self.datasets)//self.batch_size
-
-
-class Multitask(Sequential):
+class MultitaskReorder(Sequential):
     """
     The multitask learning baseline/upperbound.
     """
@@ -52,7 +20,7 @@ class Multitask(Sequential):
     def __init__(self, n_tasks, cfg, **policy_kwargs):
         super().__init__(n_tasks=n_tasks, cfg=cfg, **policy_kwargs)
 
-    def learn_all_tasks(self, datasets, benchmark, result_summary, equal_batches = True):
+    def learn_all_tasks(self, datasets, benchmark, result_summary):
         self.start_task(-1)
         concat_dataset = ConcatDataset(datasets)
 
@@ -62,20 +30,13 @@ class Multitask(Sequential):
         )
         all_tasks = list(range(benchmark.n_tasks))
 
-        if(equal_batches):
-            train_dataloader = DataLoader(
-                concat_dataset,
-                #num_workers=self.cfg.train.num_workers,
-                batch_sampler= EqualBatchSampler(concat_dataset, batch_size=self.cfg.train.batch_size),
-            )
-        else:
-            train_dataloader = DataLoader(
-                concat_dataset,
-                batch_size=self.cfg.train.batch_size,
-                num_workers=2,
-                sampler=RandomSampler(concat_dataset),
-                persistent_workers=True,
-            )
+        train_dataloader = DataLoader(
+            concat_dataset,
+            batch_size=self.cfg.train.batch_size,
+            num_workers=self.cfg.train.num_workers,
+            sampler=RandomSampler(concat_dataset),
+            persistent_workers=True,
+        )
 
         prev_success_rate = -1.0
         best_state_dict = self.policy.state_dict()  # currently save the best model
@@ -88,7 +49,6 @@ class Multitask(Sequential):
         losses = []
 
         # start training
-        print(f"Num Epochs: {self.cfg.train.n_epochs}  Batch Size: {self.cfg.train.batch_size}")
         for epoch in range(0, self.cfg.train.n_epochs + 1):
 
             t0 = time.time()
@@ -96,14 +56,12 @@ class Multitask(Sequential):
                 self.policy.train()
                 training_loss = 0.0
                 for (idx, data) in enumerate(train_dataloader):
-                    print(len(data))
                     loss = self.observe(data)
                     training_loss += loss
                 training_loss /= len(train_dataloader)
             else:  # just evaluate the zero-shot performance on 0-th epoch
                 training_loss = 0.0
                 for (idx, data) in enumerate(train_dataloader):
-                    print(f"Epoch 0, {idx}")
                     loss = self.eval_observe(data)
                     training_loss += loss
                 training_loss /= len(train_dataloader)
